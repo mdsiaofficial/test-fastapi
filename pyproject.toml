@@ -1,20 +1,24 @@
 [project]
 name = "test-fastapi"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Twitter-like social media & blogging backend built with FastAPI"
 readme = "README.md"
 authors = [
     { name = "mdsiaofficial", email = "mdsiaofficial@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.13",
+    "bcrypt>=4.2",
+    "email-validator>=2.2",
     "fastapi>=0.141.1",
-    "httpx2>=2.10.0",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.4",
+    "PyJWT>=2.9",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.52.1",
 ]
-
-[project.scripts]
-test-fastapi = "test_fastapi:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
@@ -22,6 +26,28 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.20",
+    "httpx2>=2.10.0",
     "pytest>=9.1.1",
     "ruff>=0.16.2",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["src/app/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Keep quoted forward references (SQLAlchemy circular relationships) and the
+# classic Generic[T] style with pydantic models.
+ignore = ["UP037", "UP046"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Idiomatic FastAPI: Depends()/Query() in argument defaults.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+# Quoted forward references for circular relationships are intentional here.
+"src/app/models/*.py" = ["F821"]

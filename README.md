@@ -1,112 +1,170 @@
-Your project directory is empty, so we're starting from scratch — perfect. Here's your step-by-step guide. I'm not creating anything; you run these commands yourself.
-Step 0 — Install uv (if you don't have it)
-On Linux/macOS:
-// bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-Or with pip:  pip install uv . Verify with  uv --version .
-Step 1 — Initialize the project
-Since the folder already exists, run this inside it:
-// bash
-cd /home/ashiq/works/test-fastapi
-uv init --app .
- --app  creates an application project (no package build config). This generates  pyproject.toml ,  main.py ,  README.md ,  .gitignore , and a  .python-version  pinning the Python version. uv will also create a  .venv  virtual environment on first sync — you never activate it manually.
-Step 2 — Add FastAPI + uvicorn
-// bash
-uv add fastapi "uvicorn[standard]"
-That installs both into the locked environment and updates  pyproject.toml .  [standard]  gives you the good stuff:  --reload , websockets, and better performance.
-Step 3 — Organize the app (recommended layout)
-Create this structure (you can delete the generated  main.py  in the root):
-app/
-├── __init__.py
-├── main.py            # app entry point
-├── config.py          # settings
-├── routers/           # API endpoints grouped by feature
-│   ├── __init__.py
-│   └── items.py
+# Twatter — a Twitter-like social media & blogging API
+
+A production-shaped FastAPI backend for a social network / micro-blogging platform in
+the style of Twitter: users, posts (short tweets or long-form blog posts with a title),
+follows, likes, replies, reposts, hashtags and a home feed.
+
+Built with **FastAPI + async SQLAlchemy 2.0 + PostgreSQL**, with JWT auth, Alembic
+migrations, Docker Compose, and a full pytest suite.
+
+## Features
+
+- **Auth** — register, login (email or username), JWT access + refresh tokens, bcrypt
+  password hashing
+- **Users** — public profiles with follower/following/post stats, profile updates,
+  follow / unfollow, follower & following lists
+- **Posts** — create short "tweets" or longer blog-style posts (optional `title`),
+  fetch by id, delete (owner only)
+- **Social graph** — likes, replies (comments), reposts (optionally with a quote)
+- **Hashtags** — automatically extracted from post content, searchable
+- **Home feed** — posts from people you follow plus your own, newest first
+- **Cursor pagination** — every list endpoint returns `items` + `next_cursor`
+- **Migrations** — Alembic with an async environment; schema managed by `alembic upgrade head`
+
+## Tech stack
+
+| Layer      | Choice                                             |
+| ---------- | -------------------------------------------------- |
+| Framework  | FastAPI + Uvicorn                                  |
+| ORM        | SQLAlchemy 2.0 (async) + Pydantic v2               |
+| Database   | PostgreSQL 16 (psycopg 3); SQLite/aiosqlite in tests |
+| Auth       | JWT (PyJWT) + bcrypt                               |
+| Migrations | Alembic                                            |
+| Tooling    | uv, pytest, ruff                                   |
+
+## Project structure
+
+```
+src/app/
+├── main.py            # app entry point: lifespan, CORS, router registration
+├── config.py          # pydantic-settings (env / .env)
+├── database.py        # async engine, session factory, Base, init_db
+├── security.py        # bcrypt hashing, JWT tokens, auth dependencies
+├── models/            # SQLAlchemy ORM models (user, post, social)
 ├── schemas/           # Pydantic request/response models
-│   └── item.py
-└── models/            # DB models (only if you add a database)
+├── services/          # shared business logic (post serialization, pagination)
+├── routers/           # API routers: auth, users, posts, feed, hashtags
+└── tests/             # pytest suite (53 tests)
+alembic/               # migrations (async env.py)
+docker-compose.yml     # Postgres + API
+Dockerfile
+```
 
+## Quickstart (local dev)
 
-Step 4 — Write the code
- app/main.py :
-// python
-from fastapi import FastAPI
- 
-app = FastAPI(title="Test FastAPI", version="0.1.0")
- 
-@app.get("/")
-def root():
-    return {"message": "Hello, World!"}
- 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
- app/routers/items.py  (example router):
-// python
-from fastapi import APIRouter
- 
-router = APIRouter(prefix="/items", tags=["items"])
- 
-@router.get("")
-def list_items():
-    return [{"id": 1, "name": "sample"}]
-Register the router back in  main.py :
-// python
-from fastapi import FastAPI
-from app.routers import items
- 
-app = FastAPI(title="Test FastAPI", version="0.1.0")
-app.include_router(items.router)
-Step 5 — Run the server
-// bash
+Requirements: [uv](https://docs.astral.sh/uv/) and (for the default database) Docker.
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+
+# 2. Start PostgreSQL (only the db service; the api service is for all-in-docker runs)
+docker compose up -d db
+
+# 3. Install dependencies
+uv sync
+
+# 4. Create the schema
+uv run alembic upgrade head
+
+# 5. Run the API (hot reload)
 uv run uvicorn app.main:app --reload
--  uv run  executes inside the managed venv (no  source activate  needed).
--  --reload  auto-restarts on code changes.
-Then open:
-- API docs (Swagger UI): http://127.0.0.1:8000/docs
-- Health check: http://127.0.0.1:8000/health
-(Alternative:  uv run fastapi dev app/main.py  also works and auto-imports.)
-Step 6 — Add dev tooling
-// bash
-uv add --dev pytest ruff
--  ruff check .  — linting
--  uv run pytest  — tests
-Step 7 — Write a test
- tests/test_health.py :
-// python
-from fastapi.testclient import TestClient
-from app.main import app
- 
-client = TestClient(app)
- 
-def test_health():
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
-Run with  uv run pytest .
-Step 8 — Useful extras (when you need them)
-- Config:  uv add pydantic-settings  → a  Settings  class reading  .env  files
-- Database:  uv add sqlalchemy  +  uv add --dev alembic  for migrations
-- CORS: add  CORSMiddleware  if a browser frontend will call the API
-- Auth:  uv add python-jose  +  uv add "passlib[bcrypt]"  for JWT
-- Locked reproducibility: commit the generated  uv.lock  file
-- Production: run with multiple workers via  uv run gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker 
-That's the whole happy path. If you hit any snags or want me to expand any step (e.g., the full database + Alembic setup, or JWT auth), just tell me which part.
-Suggested followups:
-•
-38s
-•
-[05:18 PM]
-Good question — this trips up a lot of beginners. Here's the short answer:
-FastAPI is not a server. Uvicorn is.
-FastAPI only builds your API — it knows how to match URLs to functions, validate request bodies, and generate the  /docs  page. But it has no way to actually listen on a network port or accept HTTP connections. That's the job of an ASGI server, and uvicorn is the standard one for FastAPI.
-Think of it like this:
-- FastAPI = the chef in the kitchen (the logic)
-- Uvicorn = the waiter at the door (receives the orders, hands back the food)
-Your  uv run uvicorn app.main:app  command literally means: "Run the uvicorn server, and give it the FastAPI app called  app  located in  app.main ."
-A few more details:
-- ASGI (Asynchronous Server Gateway Interface) is the standard protocol that Python async web frameworks speak to web servers. FastAPI is built on Starlette, which is ASGI-based — and uvicorn is the reference ASGI server.
-- The  [standard]  extra matters: plain  uvicorn  is pure-Python and works fine for development, but  uvicorn[standard]  adds compiled optimizations ( uvloop ,  httptools ) plus  websockets  support. Better performance, one keystroke more.
-- Why not something else? There are alternatives (hypercorn, granian, daphne), but uvicorn is the one the FastAPI docs recommend, the one  fastapi dev  uses under the hood, and the one you'll see referenced in almost every FastAPI tutorial and production guide (e.g.,  gunicorn -k uvicorn.workers.UvicornWorker ).
-So the rule of thumb: every FastAPI project needs both —  fastapi  (the framework) and  uvicorn  (the server that runs it).
+```
+
+Open the interactive docs at http://127.0.0.1:8000/docs (the `Authorize` button works
+with the `/api/auth/login` form). Health check: http://127.0.0.1:8000/health.
+
+### All-in-Docker
+
+```bash
+docker compose up --build
+```
+
+starts PostgreSQL and the API (running migrations on boot) at http://127.0.0.1:8000.
+
+### Tests & lint
+
+```bash
+uv run pytest        # 53 tests, isolated SQLite database, no Postgres needed
+uv run ruff check .  # lint
+```
+
+## API overview
+
+All endpoints are prefixed with `/api`.
+
+### Auth
+| Method | Path                | Description                              |
+| ------ | ------------------- | ---------------------------------------- |
+| POST   | `/auth/register`    | Create account → access + refresh tokens |
+| POST   | `/auth/login`       | Login (form: username or email + password) |
+| POST   | `/auth/refresh`     | Exchange a refresh token for a new pair  |
+
+### Users
+| Method | Path                          | Description                     |
+| ------ | ----------------------------- | ------------------------------- |
+| GET    | `/users/me`                   | Current user (includes email)   |
+| PATCH  | `/users/me`                   | Update display_name / bio / avatar_url |
+| GET    | `/users/{username}`           | Public profile with stats       |
+| POST   | `/users/{username}/follow`    | Follow a user                   |
+| DELETE | `/users/{username}/follow`    | Unfollow a user                 |
+| GET    | `/users/{username}/followers` | Paginated followers             |
+| GET    | `/users/{username}/following` | Paginated following             |
+| GET    | `/users/{username}/posts`     | A user's posts (`include_replies=true` to include replies) |
+
+### Posts & interactions
+| Method | Path                        | Description                          |
+| ------ | --------------------------- | ------------------------------------ |
+| POST   | `/posts`                    | Create a post (`title` optional)     |
+| GET    | `/posts/{id}`               | Post detail with counts + `is_liked` |
+| DELETE | `/posts/{id}`               | Delete own post (cascades replies/reposts/likes) |
+| POST   | `/posts/{id}/replies`       | Reply to a post                      |
+| GET    | `/posts/{id}/replies`       | Paginated replies                    |
+| POST   | `/posts/{id}/repost`        | Repost (`quote` optional)            |
+| DELETE | `/posts/{id}/repost`        | Remove your repost                   |
+| POST   | `/posts/{id}/like`          | Like a post                          |
+| DELETE | `/posts/{id}/like`          | Unlike a post                        |
+| GET    | `/posts/{id}/likes`         | Paginated users who liked            |
+
+### Feed & hashtags
+| Method | Path                      | Description                                   |
+| ------ | ------------------------- | --------------------------------------------- |
+| GET    | `/feed`                   | Home feed (followed users + self; `include_replies=true` optional) |
+| GET    | `/hashtags/{name}/posts`  | Posts containing a hashtag (case-insensitive) |
+
+### Pagination
+
+List endpoints accept `limit` (default 20, max 100) and `cursor` (the last item's id)
+and return `{"items": [...], "next_cursor": <id | null>}`. Pass `next_cursor` back as
+`cursor` to fetch the next page.
+
+### Authentication
+
+Protected endpoints expect `Authorization: Bearer <access_token>`. Obtain tokens via
+`POST /api/auth/register` or `POST /api/auth/login`. Access tokens expire after
+`ACCESS_TOKEN_EXPIRE_MINUTES` (default 30); use `POST /api/auth/refresh` with the
+refresh token to get a new pair.
+
+## Configuration
+
+Settings are read from environment variables or a `.env` file (see `.env.example`):
+
+| Variable                    | Default                                                       | Description              |
+| --------------------------- | ------------------------------------------------------------- | ------------------------ |
+| `DATABASE_URL`              | `postgresql+psycopg://postgres:postgres@localhost:5432/twatter` | Async SQLAlchemy URL     |
+| `JWT_SECRET_KEY`            | `change-me-in-production-...`                                 | HMAC key for JWT (≥32 chars) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30`                                                        | Access token lifetime    |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `30`                                                          | Refresh token lifetime   |
+| `CORS_ORIGINS`              | `*`                                                           | Comma-separated origins  |
+| `DEBUG`                     | `false`                                                       | Verbose SQL logging      |
+
+## Migrations
+
+```bash
+uv run alembic revision --autogenerate -m "describe change"  # after model edits
+uv run alembic upgrade head                                   # apply
+uv run alembic downgrade -1                                   # roll back one step
+```
+
+The app also calls `create_all` on startup as a dev convenience; production should rely
+on `alembic upgrade head` only.
