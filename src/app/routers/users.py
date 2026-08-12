@@ -12,6 +12,7 @@ from app.schemas.post import PostRead
 from app.schemas.user import UserPrivate, UserPublic, UserUpdate, UserWithStats
 from app.security import get_current_user, get_optional_current_user
 from app.services.posts import build_posts_page, get_user_by_username
+from app.services.users import build_users_page
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -32,6 +33,16 @@ async def update_me(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def deactivate_me(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Soft-delete the account: issued tokens stop working, the profile stays."""
+    user.is_active = False
+    await db.commit()
 
 
 @router.get("/{username}", response_model=UserWithStats)
@@ -113,17 +124,19 @@ async def list_followers(
     db: AsyncSession = Depends(get_db),
 ) -> Page[UserPublic]:
     target = await get_user_by_username(db, username)
+    # Order by the same column as the cursor predicate (User.id) so pages never
+    # skip or duplicate rows, even when follow recency differs from user id order.
     stmt = (
         select(User)
         .join(Follow, Follow.follower_id == User.id)
         .where(Follow.followed_id == target.id)
-        .order_by(Follow.created_at.desc(), User.id.desc())
+        .order_by(User.id.desc())
         .limit(limit)
     )
     if cursor is not None:
         stmt = stmt.where(User.id < cursor)
     users = (await db.scalars(stmt)).all()
-    return _user_page(users, limit)
+    return build_users_page(users, limit)
 
 
 @router.get("/{username}/following", response_model=Page[UserPublic])
@@ -134,17 +147,19 @@ async def list_following(
     db: AsyncSession = Depends(get_db),
 ) -> Page[UserPublic]:
     target = await get_user_by_username(db, username)
+    # Order by the same column as the cursor predicate (User.id) so pages never
+    # skip or duplicate rows, even when follow recency differs from user id order.
     stmt = (
         select(User)
         .join(Follow, Follow.followed_id == User.id)
         .where(Follow.follower_id == target.id)
-        .order_by(Follow.created_at.desc(), User.id.desc())
+        .order_by(User.id.desc())
         .limit(limit)
     )
     if cursor is not None:
         stmt = stmt.where(User.id < cursor)
     users = (await db.scalars(stmt)).all()
-    return _user_page(users, limit)
+    return build_users_page(users, limit)
 
 
 @router.get("/{username}/posts", response_model=Page[PostRead])
@@ -165,9 +180,3 @@ async def list_user_posts(
         stmt = stmt.where(Post.id < cursor)
     posts = (await db.scalars(stmt)).all()
     return await build_posts_page(db, posts, limit, user)
-
-
-def _user_page(users: list[User], limit: int) -> Page[UserPublic]:
-    items = [UserPublic.model_validate(u) for u in users]
-    next_cursor = users[-1].id if len(users) == limit else None
-    return Page(items=items, next_cursor=next_cursor)

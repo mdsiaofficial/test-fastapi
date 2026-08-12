@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/twatter"
+    # Dev convenience default for this repo's machine. Real credentials belong in
+    # .env (see .env.example) — env vars always override this value.
+    database_url: str = "postgresql+psycopg://ashiq:1212@localhost:5432/twatter"
 
     jwt_secret_key: str = "change-me-in-production-with-a-long-random-string"
     jwt_algorithm: str = "HS256"

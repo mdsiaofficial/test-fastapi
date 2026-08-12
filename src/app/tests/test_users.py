@@ -1,4 +1,9 @@
+import asyncio
+
 from conftest import auth_headers, register_user
+from sqlalchemy import text
+
+from app.database import engine
 
 
 def _create_post(client, token, content, title=None):
@@ -46,6 +51,27 @@ def test_update_profile(client):
 def test_update_profile_requires_auth(client):
     response = client.patch("/api/users/me", json={"bio": "hi"})
     assert response.status_code == 401
+
+
+def test_deactivate_me_soft_deletes_account(client):
+    data = register_user(client, "alice")
+    headers = auth_headers(data["access_token"])
+
+    response = client.delete("/api/users/me", headers=headers)
+    assert response.status_code == 204
+
+    # Issued tokens stop working once the account is deactivated.
+    assert client.get("/api/users/me", headers=headers).status_code == 401
+    # Login is refused too, but the profile itself still exists.
+    response = client.post(
+        "/api/auth/login", data={"username": "alice", "password": "password123"}
+    )
+    assert response.status_code == 403
+    assert client.get("/api/users/alice").status_code == 200
+
+
+def test_deactivate_me_requires_auth(client):
+    assert client.delete("/api/users/me").status_code == 401
 
 
 def test_follow_and_unfollow(client):
@@ -144,6 +170,43 @@ def test_pagination_limit_bounds(client):
     assert response.status_code == 422
     response = client.get("/api/users/nobody/posts", params={"limit": 0})
     assert response.status_code == 422
+
+
+def test_followers_pagination_returns_every_follower_once(client):
+    """Cursor pages must not skip rows when follow recency differs from id order."""
+    u1 = register_user(client, "userone")
+    u3 = register_user(client, "userthree")
+    register_user(client, "userx")
+
+    # userthree follows first (older follow), then userone (newer follow).
+    client.post("/api/users/userx/follow", headers=auth_headers(u3["access_token"]))
+    client.post("/api/users/userx/follow", headers=auth_headers(u1["access_token"]))
+
+    # Backdate userthree's follow so recency order conflicts with user id order.
+    async def backdate() -> None:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE follows SET created_at = datetime('now', '-10 seconds')"
+                    " WHERE follower_id = :uid"
+                ),
+                {"uid": u3["user"]["id"]},
+            )
+
+    asyncio.run(backdate())
+
+    seen = []
+    cursor = None
+    for _ in range(5):
+        params = {"limit": 1}
+        if cursor is not None:
+            params["cursor"] = cursor
+        body = client.get("/api/users/userx/followers", params=params).json()
+        seen.extend(item["username"] for item in body["items"])
+        cursor = body["next_cursor"]
+        if cursor is None:
+            break
+    assert sorted(seen) == ["userone", "userthree"]
 
 
 def test_pagination_cursor(client):

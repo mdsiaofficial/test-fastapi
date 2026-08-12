@@ -94,7 +94,16 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -
             detail="Invalid refresh token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = await db.get(User, int(claims["sub"]))
+    try:
+        user_id = int(claims["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        # A validly-signed token missing a usable `sub` would otherwise 500.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    user = await db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

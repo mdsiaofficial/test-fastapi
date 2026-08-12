@@ -14,15 +14,22 @@ from app.schemas.post import PostCreate, PostRead, ReplyCreate, RepostCreate
 from app.schemas.user import UserPublic
 from app.security import get_current_user, get_optional_current_user
 from app.services.posts import build_posts_page, get_post_or_404, serialize_posts
+from app.services.users import build_users_page
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 
 HASHTAG_RE = re.compile(r"#[A-Za-z0-9_]+")
+# Must match the Hashtag.name column length; without this cap, a 5000-char run of
+# letters after '#' would overflow VARCHAR(100) on PostgreSQL and raise a 500.
+MAX_HASHTAG_LENGTH = 100
 
 
 def extract_hashtags(content: str) -> list[str]:
     """Return unique, lowercased hashtag names found in the content."""
-    return sorted({match[1:].lower() for match in HASHTAG_RE.findall(content)})
+    names = {
+        match[1:].lower()[:MAX_HASHTAG_LENGTH] for match in HASHTAG_RE.findall(content)
+    }
+    return sorted(names)
 
 
 async def _get_or_create_hashtags(
@@ -35,9 +42,21 @@ async def _get_or_create_hashtags(
     ).all()
     by_name = {tag.name: tag for tag in existing}
     fresh = [Hashtag(name=name) for name in names if name not in by_name]
-    if fresh:
-        db.add_all(fresh)
+    if not fresh:
+        return list(by_name.values())
+    db.add_all(fresh)
+    try:
         await db.flush()
+    except IntegrityError:
+        # A concurrent request created one of these hashtags first and the unique
+        # index rejected our insert. Roll back (nothing else is pending yet — the
+        # post is only added afterwards) and reload the surviving rows.
+        await db.rollback()
+        existing = (
+            await db.scalars(select(Hashtag).where(Hashtag.name.in_(names)))
+        ).all()
+        by_name = {tag.name: tag for tag in existing}
+        fresh = []
     return list(by_name.values()) + fresh
 
 
@@ -248,16 +267,16 @@ async def list_likes(
     db: AsyncSession = Depends(get_db),
 ) -> Page[UserPublic]:
     await get_post_or_404(db, post_id)
+    # Order by the same column as the cursor predicate (User.id) so pages never
+    # skip or duplicate rows, even when like recency differs from user id order.
     stmt = (
         select(User)
         .join(Like, Like.user_id == User.id)
         .where(Like.post_id == post_id)
-        .order_by(Like.created_at.desc(), User.id.desc())
+        .order_by(User.id.desc())
         .limit(limit)
     )
     if cursor is not None:
         stmt = stmt.where(User.id < cursor)
     users = (await db.scalars(stmt)).all()
-    items = [UserPublic.model_validate(u) for u in users]
-    next_cursor = users[-1].id if len(users) == limit else None
-    return Page(items=items, next_cursor=next_cursor)
+    return build_users_page(users, limit)

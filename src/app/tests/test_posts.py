@@ -1,4 +1,9 @@
+import asyncio
+
 from conftest import auth_headers, register_user
+from sqlalchemy import text
+
+from app.database import engine
 
 
 def test_create_post(client):
@@ -245,6 +250,59 @@ def test_unlike_not_liked_404(client):
         f"/api/posts/{post_id}/like", headers=auth_headers(bob["access_token"])
     )
     assert response.status_code == 404
+
+
+def test_create_post_with_overlong_hashtag_truncates(client):
+    """Hashtags longer than the Hashtag.name column must be capped, not error."""
+    alice = register_user(client, "alice")
+    tag = "a" * 200
+    response = client.post(
+        "/api/posts",
+        json={"content": f"Check #{tag}"},
+        headers=auth_headers(alice["access_token"]),
+    )
+    assert response.status_code == 201
+    assert response.json()["hashtags"] == ["a" * 100]
+
+
+def test_likes_pagination_returns_every_liker_once(client):
+    """Cursor pages must not skip rows when like recency differs from id order."""
+    alice = register_user(client, "alice")
+    u1 = register_user(client, "userone")
+    u3 = register_user(client, "userthree")
+    post_id = client.post(
+        "/api/posts", json={"content": "Like me"}, headers=auth_headers(alice["access_token"])
+    ).json()["id"]
+
+    # userthree likes first (older like), then userone (newer like).
+    client.post(f"/api/posts/{post_id}/like", headers=auth_headers(u3["access_token"]))
+    client.post(f"/api/posts/{post_id}/like", headers=auth_headers(u1["access_token"]))
+
+    # Backdate userthree's like so recency order conflicts with user id order.
+    async def backdate() -> None:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE likes SET created_at = datetime('now', '-10 seconds')"
+                    " WHERE user_id = :uid AND post_id = :pid"
+                ),
+                {"uid": u3["user"]["id"], "pid": post_id},
+            )
+
+    asyncio.run(backdate())
+
+    seen = []
+    cursor = None
+    for _ in range(5):
+        params = {"limit": 1}
+        if cursor is not None:
+            params["cursor"] = cursor
+        body = client.get(f"/api/posts/{post_id}/likes", params=params).json()
+        seen.extend(item["username"] for item in body["items"])
+        cursor = body["next_cursor"]
+        if cursor is None:
+            break
+    assert sorted(seen) == ["userone", "userthree"]
 
 
 def test_delete_post_cascades_likes_and_replies(client):

@@ -1,0 +1,43 @@
+# Optional: run EVERYTHING in Docker (PostgreSQL + API).
+#
+#   docker compose -f docker-compose.full.yml up --build
+#
+# Use this only if you don't have a PostgreSQL running on your machine. The
+# default docker-compose.yml runs the API in Docker against your host's Postgres.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ashiq
+      POSTGRES_PASSWORD: 1212
+      POSTGRES_DB: twatter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ashiq -d twatter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Port 5432 is intentionally NOT published, so this containerized Postgres
+    # never clashes with a Postgres already running on the host machine.
+
+  # The api service is intentionally duplicated from docker-compose.yml so this file
+  # works standalone (one command, no -f chaining). Keep the two in sync when editing.
+  api:
+    build: .
+    environment:
+      # Credentials must match the db service above.
+      DATABASE_URL: postgresql+psycopg://ashiq:1212@db:5432/twatter
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-long-random-string}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "uv run alembic upgrade head &&
+             uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  pgdata:

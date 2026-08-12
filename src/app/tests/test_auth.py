@@ -1,4 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
+import jwt
 from conftest import auth_headers, login, register_user
+
+from app.config import settings
 
 
 def test_register_success(client):
@@ -136,4 +141,21 @@ def test_refresh_rejects_garbage(client):
     response = client.post(
         "/api/auth/refresh", json={"refresh_token": "not-a-token"}
     )
+    assert response.status_code == 401
+
+
+def test_refresh_rejects_token_without_subject(client):
+    """A validly-signed refresh token missing `sub` must 401, not 500."""
+    now = datetime.now(UTC)
+    token = jwt.encode(
+        {
+            "jti": "x" * 32,
+            "type": "refresh",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    response = client.post("/api/auth/refresh", json={"refresh_token": token})
     assert response.status_code == 401

@@ -28,7 +28,7 @@ class PostRead(BaseModel):
     author: UserPublic
     title: str | None = None
     content: str
-    hashtags: list[str] = []
+    hashtags: list[str] = Field(default_factory=list)
     reply_to_id: int | None = None
     repost_of_id: int | None = None
     is_reply: bool = False
